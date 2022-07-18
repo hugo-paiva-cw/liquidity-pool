@@ -14,9 +14,8 @@ contract LiquidityPool {
     }
     
     address public contractOwner;
-    Investment[] public investments;
     uint public dailyCDIinPoints = 49037; // fracao de 1% por 1_000_000;
-    // mapping(address => bool ) public isInvestor;
+    mapping(address => Investment ) public allInvestors;
     uint secondsPerDay = 86400;
 
     modifier onlyOwner() {
@@ -25,44 +24,28 @@ contract LiquidityPool {
     }
 
     function invest() public payable {
-        uint previousInvestmentValue = 0;
-        bool isNewInvestor = lookUpPreviousInvestmentsAndUpdate();
+        // bool isNewInvestor = lookUpPreviousInvestmentsAndUpdate();
+        Investment memory currentInvestment = allInvestors[msg.sender];
+        uint depositPlusInterest = 0;
+        if (currentInvestment.timestampOfDeposit > 0) {
+            int128 interest = getInterestSince(currentInvestment.timestampOfDeposit);
 
-        if (isNewInvestor) {
-            Investment memory newInvestment = Investment({
-                investor: msg.sender,
-                timestampOfDeposit: block.timestamp,
-                amountOfMoney: weiToEther(msg.value)
-            });
-
-            investments.push(newInvestment);    
+            int128 amountOfMoney = ABDKMath64x64.fromUInt(currentInvestment.amountOfMoney);
+            depositPlusInterest =  ABDKMath64x64.toUInt(ABDKMath64x64.mul(interest, amountOfMoney)); // + weiToEther(msg.value);
         }
+
+        uint previousValue = depositPlusInterest;
+
+        Investment storage updatedInvestment = allInvestors[msg.sender];          
+        
+        updatedInvestment.investor = msg.sender;
+        updatedInvestment.timestampOfDeposit = block.timestamp;
+        updatedInvestment.amountOfMoney = weiToEther(msg.value) + previousValue;   
     }
 
-    function lookUpPreviousInvestmentsAndUpdate() public payable returns (uint) {
-        Investment memory currentInvestment;
-        bool isNewInvestor = true;
-        uint thisIndex;
-        for (uint index = 0; index < investments.length; index++) {
-            if (investments[index].investor == msg.sender) {
-                currentInvestment = investments[index];
-                isNewInvestor = false;
-                thisIndex = index;
-            }
-        }
-        if (isNewInvestor) return isNewInvestor;
+    // function lookUpPreviousInvestmentsAndUpdate() private returns (bool) {
 
-        int128 interest = getInterestSince(currentInvestment.timestampOfDeposit);
-
-        int128 amountOfMoney = ABDKMath64x64.fromUInt(currentInvestment.amountOfMoney);
-        uint newBalance =  ABDKMath64x64.toUInt(ABDKMath64x64.mul(interest, amountOfMoney)) + weiToEther(msg.value);
-
-        currentInvestment.amountOfMoney = newBalance;
-        currentInvestment.timestampOfDeposit = block.timestamp;
-        investments[thisIndex] = currentInvestment;
-
-        return false;
-    }
+    // }
 
     function etherToWei(uint valueEther) public pure returns (uint) {
        return valueEther*(10**18);
@@ -73,31 +56,23 @@ contract LiquidityPool {
     }
 
     function withdrawTokens(uint requestedValue) public {
-        Investment memory currentInvestment;
-        bool investmentIsFound = false;
-        uint thisIndex;
-        for (uint index = 0; index < investments.length; index++) {
-            if (investments[index].investor == msg.sender) {
-                currentInvestment = investments[index];
-                investmentIsFound = true;
-                thisIndex = index;
-            }
-        }
-        require(investmentIsFound);
-        require(weiToEther(requestedValue) < currentInvestment.amountOfMoney);
+        Investment storage currentInvestment = allInvestors[msg.sender];
 
+        require(currentInvestment.amountOfMoney > 0);        
+        require(weiToEther(requestedValue) < currentInvestment.amountOfMoney);
+        
         int128 interest = getInterestSince(currentInvestment.timestampOfDeposit);
 
         int128 amountOfMoney = ABDKMath64x64.fromUInt(currentInvestment.amountOfMoney);
         uint acumulattedDepositPlusInterest =  ABDKMath64x64.toUInt(ABDKMath64x64.mul(interest, amountOfMoney));
         uint newBalance = acumulattedDepositPlusInterest - requestedValue;
+
         address customer = currentInvestment.investor;
         bool isCompleted = payable(customer).send(etherToWei(requestedValue));
         
         if (isCompleted) {
             currentInvestment.amountOfMoney = newBalance;
             currentInvestment.timestampOfDeposit = block.timestamp;
-            investments[thisIndex] = currentInvestment;
         }
     }
 
@@ -106,17 +81,13 @@ contract LiquidityPool {
     // }
 
     function checkMyBalance() public view returns(uint) {
-        Investment memory currentInvestment;
-        bool investmentIsFound = false;
-        for (uint index = 0; index < investments.length; index++) {
-            if (investments[index].investor == msg.sender) {
-                currentInvestment = investments[index];
-                investmentIsFound = true;
-            }
-        }
-        require(investmentIsFound);
+        uint valor = allInvestors[msg.sender].amountOfMoney;
 
-        return currentInvestment.amountOfMoney;
+
+        // require(investmentIsFound); // acredito que é possivle passar mensagem de erro como parametro
+        return valor;
+
+        // return currentInvestment.amountOfMoney;
     }
 
     function checkContractBalance() public view returns (uint) {
